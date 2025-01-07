@@ -1,0 +1,9 @@
+{
+    "plugins": [     
+        {
+            "name": "QQ音乐",
+            "url": "https://raw.githubusercontent.com/hzauliutingting/Music_Free_l/refs/heads/main/qqmusic.js",
+            "version": "1.0.0"
+        }
+    ]
+}
