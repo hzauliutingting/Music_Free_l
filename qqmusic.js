@@ -285,7 +285,7 @@ async function getAlbumInfo(albumItem, page = 1) {
 module.exports = {
     platform: "QQ音乐",
     version: "1.0.0",
-    author: '你的名字',
+    author: "Huibq",
     appVersion: ">0.1.0",
     srcUrl: "你的源码URL",
     cacheControl: "no-cache",
