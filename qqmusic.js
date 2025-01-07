@@ -4,6 +4,9 @@ const axios = require("axios");
 const cheerio = require("cheerio");
 const CryptoJs = require("crypto-js");
 const he = require("he");
+const qs = require("qs");
+const bigInt = require("big-integer");
+const dayjs = require("dayjs");
 
 const pageSize = 20;
 
@@ -48,7 +51,7 @@ function formatAlbumItem(item) {
         title: he.decode(item.albumname),
         artist: item.singername,
         artwork: item.albumimg,
-        publishTime: item.public_time,
+        publishTime: dayjs.unix(item.public_time / 1000).format("YYYY-MM-DD"),
     };
 }
 
@@ -58,122 +61,131 @@ function formatSheetItem(item) {
         title: he.decode(item.title),
         description: he.decode(item.desc),
         coverImg: item.cover,
-        creator: item.creator,
+        creator: item.creator ? item.creator.nickname : "",
         playCount: item.listenCount,
     };
 }
 
+// 密钥生成函数
+function create_key() {
+    const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    let key = "";
+    for (let i = 0; i < 16; i++) {
+        const randIndex = Math.floor(Math.random() * chars.length);
+        key += chars.charAt(randIndex);
+    }
+    return key;
+}
+
+// AES加密函数
+function AES(a, b) {
+    const key = CryptoJs.enc.Utf8.parse(b);
+    const iv = CryptoJs.enc.Utf8.parse("0102030405060708");
+    const encrypted = CryptoJs.AES.encrypt(CryptoJs.enc.Utf8.parse(a), key, {
+        iv: iv,
+        mode: CryptoJs.mode.CBC,
+        padding: CryptoJs.pad.Pkcs7,
+    });
+    return encrypted.toString();
+}
+
+// RSA加密函数
+function Rsa(text) {
+    text = text.split("").reverse().join("");
+    const e = "010001"; // 公钥指数
+    const n = "00e0b509f6259df8642dbc35662901477df22677ec152b5ff68ace615bb7b725152b3ab17a876aea8a5aa76d2e417629ec4ee341f56135fccf695280104e0312ecbda92557c93870114af6c9d05c4f7f0c3685b7a46bee255932575cce10b424d813cfe4875d3e82047b97ddef52741d546b8e289dc6935b3ece0462db0a22b8e7";
+    const hexText = Buffer.from(text, 'utf-8').toString('hex');
+    const res = bigInt(hexText, 16)
+        .modPow(bigInt(e, 16), bigInt(n, 16))
+        .toString(16);
+    return res.padStart(256, '0');
+}
+
+// 获取加密参数
+function getParamsAndEnc(text) {
+    const first = AES(text, "0CoJUm6Qyw8W8jud");
+    const rand = create_key();
+    const params = AES(first, rand);
+    const encSecKey = Rsa(rand);
+    return {
+        params,
+        encSecKey,
+    };
+}
+
+// 搜索基础函数
+async function searchBase(query, page, type) {
+    const data = {
+        s: query,
+        limit: pageSize,
+        type: type,
+        offset: (page - 1) * pageSize,
+        csrf_token: "",
+    };
+    const encrypted = getParamsAndEnc(JSON.stringify(data));
+    const paeData = qs.stringify(encrypted);
+    const postHeaders = {
+        ...headers,
+        "Content-Type": "application/x-www-form-urlencoded",
+    };
+    try {
+        const res = await axios.post("https://music.163.com/weapi/search/get", paeData, {
+            headers: postHeaders,
+        });
+        return res.data;
+    } catch (error) {
+        console.error(`搜索失败: ${error.message}`);
+        throw error;
+    }
+}
+
 // 搜索音乐
 async function searchMusic(query, page) {
-    const url = "https://c.y.qq.com/soso/fcgi-bin/search_for_qq_cp";
-    const params = {
-        w: query,
-        p: page,
-        n: pageSize,
-        format: "json",
-        aggr: 1,
-        cr: 1,
-        catZhida: 1,
-        lossless: 0,
-        flag_qc: 0,
-        remoteplace: "txt.yqq.center",
-    };
-
-    const data = await httpGet(url, params);
-    const songs = data.data.song.list.map(formatMusicItem);
+    const res = await searchBase(query, page, 1);
+    const songs = res.result.songs.map(formatMusicItem);
     return {
-        isEnd: (page * pageSize) >= data.data.song.totalnum,
+        isEnd: res.result.songCount <= page * pageSize,
         data: songs,
     };
 }
 
 // 搜索专辑
 async function searchAlbum(query, page) {
-    const url = "https://c.y.qq.com/soso/fcgi-bin/search_for_qq_cp";
-    const params = {
-        w: query,
-        p: page,
-        n: pageSize,
-        format: "json",
-        aggr: 1,
-        cr: 1,
-        catZhida: 1,
-        lossless: 0,
-        flag_qc: 0,
-        remoteplace: "txt.yqq.center",
-        t: 8, // 搜索类型为专辑
-    };
-
-    const data = await httpGet(url, params);
-    const albums = data.data.album.list.map(formatAlbumItem);
+    const res = await searchBase(query, page, 10);
+    const albums = res.result.albums.map(formatAlbumItem);
     return {
-        isEnd: (page * pageSize) >= data.data.album.totalnum,
+        isEnd: res.result.albumCount <= page * pageSize,
         data: albums,
     };
 }
 
 // 搜索歌单
 async function searchSheet(query, page) {
-    const url = "https://c.y.qq.com/soso/fcgi-bin/search_for_qq_cp";
-    const params = {
-        w: query,
-        p: page,
-        n: pageSize,
-        format: "json",
-        aggr: 1,
-        cr: 1,
-        catZhida: 1,
-        lossless: 0,
-        flag_qc: 0,
-        remoteplace: "txt.yqq.center",
-        t: 6, // 搜索类型为歌单
-    };
-
-    const data = await httpGet(url, params);
-    const sheets = data.data.diss.list.map(formatSheetItem);
+    const res = await searchBase(query, page, 6);
+    const sheets = res.result.playlists.map(formatSheetItem);
     return {
-        isEnd: (page * pageSize) >= data.data.diss.totalnum,
+        isEnd: res.result.playlistCount <= page * pageSize,
         data: sheets,
     };
 }
 
 // 获取媒体源
-async function getMediaSource(musicItem) {
+async function getMediaSource(musicItem, quality = "standard") {
+    const qualityLevels = {
+        low: "128k",
+        standard: "320k",
+        high: "320k",
+        super: "320k",
+    };
     try {
-        // 获取歌曲播放URL的API
-        const url = "https://u.y.qq.com/cgi-bin/musicu.fcg";
-        const params = {
-            format: "json",
-        };
-        const postData = {
-            "comm": {
-                "uin": 0,
-                "format": "json",
-                "ct": 24,
-                "cv": 0
+        const response = await axios.get(`https://lxmusicapi.onrender.com/url/wy/${musicItem.id}/${qualityLevels[quality]}`, {
+            headers: {
+                "X-Request-Key": "share-v2"
             },
-            "songinfo": {
-                "method": "get_song_detail_yqq",
-                "param": {
-                    "song_type": 0,
-                    "song_mid": musicItem.id,
-                    "song_id": musicItem.id
-                },
-                "module": "music.pf_song_detail_svr",
-                "data": {}
-            }
+        });
+        return {
+            url: response.data.url,
         };
-
-        const response = await axios.post(url, postData, { headers });
-        const songData = response.data.data.songinfo.data[0];
-        if (songData && songData.url) {
-            return {
-                url: songData.url,
-            };
-        } else {
-            console.error("未能获取到媒体源URL");
-            return null;
-        }
     } catch (error) {
         console.error(`获取媒体源失败: ${error.message}`);
         throw error;
@@ -183,22 +195,44 @@ async function getMediaSource(musicItem) {
 // 获取排行榜
 async function getTopLists() {
     try {
-        const url = "https://c.y.qq.com/v8/fcg-bin/fcg_myqq_toplist.fcg";
-        const params = {
-            platform: "yqq",
-            format: "json",
-        };
-
-        const data = await httpGet(url, params);
-        const lists = data.data.topList.map(item => ({
-            id: item.topId,
-            title: he.decode(item.title),
-            coverImg: item.picUrl,
-            playCount: item.listenCount,
-            description: he.decode(item.content),
-        }));
-
-        return lists;
+        const res = await axios.get("https://music.163.com/discover/toplist", {
+            headers: {
+                "Referer": "https://music.163.com/",
+                "User-Agent": headers["User-Agent"],
+            },
+        });
+        const $ = cheerio.load(res.data);
+        const children = $(".n-minelst").children();
+        const groups = [];
+        let currentGroup = {};
+        children.each((index, element) => {
+            const tag = $(element).prop("tagName").toLowerCase();
+            if (tag === "h2") {
+                if (currentGroup.title) {
+                    groups.push(currentGroup);
+                }
+                currentGroup = {};
+                currentGroup.title = $(element).text().trim();
+                currentGroup.data = [];
+            } else if (tag === "ul") {
+                $(element).children("li").each((i, el) => {
+                    const id = $(el).attr("data-res-id");
+                    const coverImg = $(el).find("img").attr("src").replace(/(\.jpg\?).*/, ".jpg?param=800y800");
+                    const title = $(el).find("p.name").text().trim();
+                    const description = $(el).find("p.s-fc4").text().trim();
+                    currentGroup.data.push({
+                        id,
+                        coverImg,
+                        title,
+                        description,
+                    });
+                });
+            }
+        });
+        if (currentGroup.title) {
+            groups.push(currentGroup);
+        }
+        return groups;
     } catch (error) {
         console.error(`获取排行榜失败: ${error.message}`);
         throw error;
@@ -208,22 +242,28 @@ async function getTopLists() {
 // 获取排行榜详情
 async function getTopListDetail(topListItem) {
     try {
-        const url = "https://c.y.qq.com/v8/fcg-bin/fcg_v8_toplist_cp.fcg";
-        const params = {
-            topid: topListItem.id,
-            format: "json",
-            page: "detail",
-            type: "top",
-            tpl: 3,
-            json: 1,
-            onlysong: 0,
+        const url = "https://music.163.com/weapi/v1/playlist/detail";
+        const data = {
+            id: topListItem.id,
+            n: 1000,
+            csrf_token: "",
         };
-
-        const data = await httpGet(url, params);
-        const songs = data.songlist.map(item => formatMusicItem(item.data));
+        const encrypted = getParamsAndEnc(JSON.stringify(data));
+        const paeData = qs.stringify(encrypted);
+        const postHeaders = {
+            ...headers,
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Referer": "https://music.163.com/",
+        };
+        const res = await axios.post(url, paeData, {
+            headers: postHeaders,
+        });
+        const songs = res.data.playlist.trackIds.map(item => item.id);
+        // 批量获取歌曲详情
+        const musicDetails = await getValidMusicItems(songs);
         return {
             ...topListItem,
-            musicList: songs,
+            musicList: musicDetails,
         };
     } catch (error) {
         console.error(`获取排行榜详情失败: ${error.message}`);
@@ -231,23 +271,45 @@ async function getTopListDetail(topListItem) {
     }
 }
 
+// 获取有效的音乐项
+async function getValidMusicItems(trackIds) {
+    const headers = {
+        "Referer": "https://music.163.com/",
+        "User-Agent": headers["User-Agent"],
+    };
+    try {
+        const res = await axios.get(`https://music.163.com/api/song/detail/?ids=[${trackIds.join(",")}]`, { headers });
+        const validMusicItems = res.data.songs.map(formatMusicItem);
+        return validMusicItems;
+    } catch (error) {
+        console.error(`获取有效音乐项失败: ${error.message}`);
+        return [];
+    }
+}
+
 // 获取歌词
 async function getLyric(musicItem) {
     try {
-        const url = "https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg";
-        const params = {
-            songmid: musicItem.id,
-            format: "json",
-            nolyric: 0,
-            json: 1,
+        const url = "https://music.163.com/weapi/song/lyric";
+        const data = {
+            id: musicItem.id,
+            lv: -1,
+            tv: -1,
+            csrf_token: "",
         };
-
-        const data = await httpGet(url, params);
-        if (data.lyric) {
-            // QQ音乐的歌词是Base64编码的
-            const decoded = Buffer.from(data.lyric, 'base64').toString('utf-8');
+        const encrypted = getParamsAndEnc(JSON.stringify(data));
+        const paeData = qs.stringify(encrypted);
+        const postHeaders = {
+            ...headers,
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Referer": "https://music.163.com/",
+        };
+        const res = await axios.post(url, paeData, {
+            headers: postHeaders,
+        });
+        if (res.data.lrc && res.data.lrc.lyric) {
             return {
-                rawLrc: he.decode(decoded),
+                rawLrc: he.decode(Buffer.from(res.data.lrc.lyric, 'base64').toString('utf-8')),
             };
         } else {
             return {
@@ -268,7 +330,6 @@ async function getAlbumInfo(albumItem, page = 1) {
             albummid: albumItem.id,
             format: "json",
         };
-
         const data = await httpGet(url, params);
         const songs = data.data.list.map(formatMusicItem);
         return {
@@ -278,6 +339,47 @@ async function getAlbumInfo(albumItem, page = 1) {
     } catch (error) {
         console.error(`获取专辑信息失败: ${error.message}`);
         throw error;
+    }
+}
+
+// 导入歌单
+async function importMusicSheet(urlLike) {
+    const matchResult = urlLike.match(/(?:https:\/\/y\.music\.163\.com\/m\/playlist\?id=([0-9]+))|(?:https?:\/\/music\.163\.com\/playlist\/([0-9]+)\/.*)|(?:https?:\/\/music\.163.com(?:\/#)?\/playlist\?id=(\d+))|(?:^\s*(\d+)\s*$)/);
+    const id = matchResult[1] || matchResult[2] || matchResult[3] || matchResult[4];
+    if (!id) {
+        console.error("未能解析歌单ID");
+        return [];
+    }
+    try {
+        const musicList = await getSheetMusicById(id);
+        return musicList;
+    } catch (error) {
+        console.error(`导入歌单失败: ${error.message}`);
+        return [];
+    }
+}
+
+// 获取歌单中的音乐
+async function getSheetMusicById(id) {
+    const headers = {
+        "Referer": "https://music.163.com/",
+        "User-Agent": headers["User-Agent"],
+    };
+    try {
+        const sheetDetail = await axios.get(`https://music.163.com/api/v3/playlist/detail?id=${id}&n=5000`, { headers });
+        const trackIds = sheetDetail.data.playlist.trackIds.map(item => item.id);
+        let result = [];
+        let idx = 0;
+        while (idx * 200 < trackIds.length) {
+            const batchIds = trackIds.slice(idx * 200, (idx + 1) * 200);
+            const res = await getValidMusicItems(batchIds);
+            result = result.concat(res);
+            idx++;
+        }
+        return result;
+    } catch (error) {
+        console.error(`获取歌单音乐失败: ${error.message}`);
+        return [];
     }
 }
 
@@ -308,4 +410,5 @@ module.exports = {
     getTopListDetail,
     getLyric,
     getAlbumInfo,
+    importMusicSheet,
 };
