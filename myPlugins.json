@@ -1,0 +1,9 @@
+{
+    "plugins": [     
+        {
+            "name": "QQ音乐",
+            "url": "https://raw.githubusercontent.com/你的用户名/Music_Free/main/qqmusic.js",
+            "version": "1.0.0"
+        }
+    ]
+}
