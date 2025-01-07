@@ -287,7 +287,7 @@ module.exports = {
     version: "1.0.0",
     author: "Huibq",
     appVersion: ">0.1.0",
-    srcUrl: "https://raw.githubusercontent.com/hzauliutingting/Music_Free_l/refs/heads/main/qqmusic.js",
+    srcUrl: "https://raw.githubusercontent.com/hzauliutingting/Music_Free_l/main/qqmusic.js",
     cacheControl: "no-cache",
     description: "QQ音乐的Node.js模块，支持搜索音乐、专辑、歌单，获取媒体源、排行榜及其详情、歌词等功能。",
     primaryKey: ["id"],
